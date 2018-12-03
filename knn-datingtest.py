@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import sys
-import array
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
