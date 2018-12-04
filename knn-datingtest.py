@@ -70,7 +70,7 @@ def dating_test(test_rate, normdata, datingLabels, k):
         if ret != datingLabels[i]:
             error += 1.0
 
-    print('error rate is {}%%'.format(round(error / test_nums * 100, 2)))
+    print('error rate is {}%'.format(round(error / test_nums * 100, 2)))
 
 def knn_dating_test(test_rate, filepath, k):
     datingDataMat, datingLabels = file2matrix(filepath)

@@ -23,7 +23,7 @@ class MyExcept(Exception):
     def __str__(self):
         return self.msg
 
-def classfy(td_item, dataset, lableset, k):
+def classfy_process(td_item, dataset, lableset, k, expect, d):
     row = dataset.shape[0]
     td_dataset = np.tile(td_item, (row, 1))
     diffsqure_dataset = (td_dataset - dataset) ** 2
@@ -35,7 +35,9 @@ def classfy(td_item, dataset, lableset, k):
         classfy_dict[val] = classfy_dict.get(val, 0) + 1
 
     sorted_classfy_dict = sorted(classfy_dict, key=lambda k:classfy_dict[k], reverse=True)
-    return sorted_classfy_dict[0]
+    if sorted_classfy_dict[0] != expect:
+        d['error'] += 1
+    return
 
 
 def image2vector(filepath):
@@ -68,31 +70,40 @@ def get_words_dataset(dir):
 
     return training_dataset, words_labels
 
+def task(start, end, test_dataset, training_dataset, training_labels, k, test_labels, d):
+    for idx in range(start, end):
+        classfy_process(test_dataset[idx][:], training_dataset, training_labels, k, test_labels[idx], d)
+
 @my_wrap
-def main(argv=None):
+def main_process(argv=None):
     if not argv:
         argv = sys.argv
 
     try:
         training_dataset, training_labels = get_words_dataset('trainingDigits')
         test_dataset, test_labels = get_words_dataset('testDigits')
-        # print('training_dataset.shape={}'.format(training_dataset.shape))
-        # print('test_dataset.shape={}'.format(test_dataset.shape))
+        pool = Pool(processes=cpu_count()*4)
         words_count = test_dataset.shape[0]
-        error = 0
-        for idx in range(words_count):
-            ret = classfy(test_dataset[idx][:], training_dataset, training_labels, 3)
-            if ret != test_labels[idx]:
-                error += 1
+        d = Manager().dict()
+        d['error'] = 0
+        chunk_size = 110
+        blocks = words_count//chunk_size + 1 # 最后一块可能少于100
+        for idx in range(blocks):
+            start = idx * chunk_size
+            end = min((idx + 1) * chunk_size, words_count)
+            pool.apply_async(task, args=(start, end, test_dataset, training_dataset, training_labels, 3, test_labels,d))
+            # pool.apply_async(classfy_process, args=(test_dataset[idx][:], training_dataset, training_labels, 3, test_labels[idx],d))
 
-        print('error rate is {}%'.format(round(error / words_count * 100, 2)))
-        pass
+        pool.close()
+        pool.join()
+
+        print('error rate is {}%'.format(round(d['error'] / words_count * 100, 2)))
+
     except MyExcept as e:
         print(e)
         return 2
 
     return 0
 
-
 if __name__ == '__main__':
-    sys.exit(main())
+    sys.exit(main_process())
