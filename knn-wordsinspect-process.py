@@ -6,6 +6,9 @@ import time
 from os import listdir
 import numpy as np
 from multiprocessing import Pool, cpu_count, Process, Manager
+import asyncio
+import aiofiles
+from aiofile import AIOFile, LineReader, Writer
 
 def my_wrap(func):
     def inner(*args, **kwargs):
@@ -39,27 +42,74 @@ def classfy_process(td_item, dataset, lableset, k, expect, d):
         d['error'] += 1
     return
 
+async def image2vector_async(filepath, d, label):
+    async with aiofiles.open(filepath) as f:
+        data = np.zeros((1, 1024))
+        index = 0
+        async for line in f:
+            if not line:
+                break
+            line = line.strip()
+            if len(line) != 32:
+                raise MyExcept('数字文件错误:长度不为32,content={}, line={}, file={}'.format(line, index, filepath))
+            index += 1
+            if index > 32:
+                raise MyExcept('数字文件错误:超过32行,content={}'.format(line))
+            # l_array = np.array([[i for i in line]])
+            # print('l_array.shape={}, data.shape={}'.format(l_array.shape, data.shape))
+            data[0][(index-1)*32:index*32] = [float(i) for i in line]
+
+        d[filepath] = {}
+        d[filepath]['dataset'] = data
+        d[filepath]['label'] = label
 
 def image2vector(filepath):
-    f = open(filepath)
-    data = np.zeros((1, 1024))
-    index = 0
-    for line in f.readlines():
-        if not line:
-            break
-        line = line.strip()
-        if len(line) != 32:
-            raise MyExcept('数字文件错误:长度不为32')
-        index += 1
-        if index > 32:
-            raise MyExcept('数字文件错误:超过32行')
-        # l_array = np.array([[i for i in line]])
-        # print('l_array.shape={}, data.shape={}'.format(l_array.shape, data.shape))
-        data[0][(index-1)*32:index*32] = [float(i) for i in line]
+    with open(filepath) as f:
+        data = np.zeros((1, 1024))
+        index = 0
+        for line in f.readlines():
+            if not line:
+                break
+            line = line.strip()
+            if len(line) != 32:
+                raise MyExcept('数字文件错误:长度不为32')
+            index += 1
+            if index > 32:
+                raise MyExcept('数字文件错误:超过32行')
+            # l_array = np.array([[i for i in line]])
+            # print('l_array.shape={}, data.shape={}'.format(l_array.shape, data.shape))
+            data[0][(index-1)*32:index*32] = [float(i) for i in line]
 
     return data
 
-def get_words_dataset(dir):
+@my_wrap
+def get_words_dataset_async(dir, **kwargs):
+    d = {}
+    filelist = listdir(dir)
+    tasks = []
+    for file in filelist:
+        label = int(file.split('.')[0].split('_')[0])
+        func = image2vector_async(os.path.join(dir, file), d, label)
+        tasks.append(func)
+
+    if 'loop' not in kwargs:
+        loop = asyncio.get_event_loop()
+    else:
+        loop = kwargs['loop']
+
+    loop.run_until_complete(asyncio.wait(tasks))
+
+    training_dataset = np.zeros((0, 1024))
+    words_labels = []
+    for k in d:
+        words_dataset = d[k]['dataset']
+        words_labels.append(d[k]['label'])
+        training_dataset = np.r_[training_dataset, words_dataset]
+
+    return training_dataset, words_labels
+
+@my_wrap
+def get_words_dataset(dir, **kwargs):
     words_labels = []
     filelist = listdir(dir)
     training_dataset = np.zeros((0, 1024))
@@ -80,8 +130,10 @@ def main_process(argv=None):
         argv = sys.argv
 
     try:
-        training_dataset, training_labels = get_words_dataset('trainingDigits')
-        test_dataset, test_labels = get_words_dataset('testDigits')
+        loop = asyncio.get_event_loop()
+        training_dataset, training_labels = get_words_dataset_async('trainingDigits', loop=loop)
+        test_dataset, test_labels = get_words_dataset_async('testDigits', loop=loop)
+        loop.close()
         pool = Pool(processes=cpu_count()*4)
         words_count = test_dataset.shape[0]
         d = Manager().dict()
@@ -94,7 +146,9 @@ def main_process(argv=None):
             pool.apply_async(task, args=(start, end, test_dataset, training_dataset, training_labels, 3, test_labels,d))
             # pool.apply_async(classfy_process, args=(test_dataset[idx][:], training_dataset, training_labels, 3, test_labels[idx],d))
 
+        #关闭进程池，不再向池中加入新的进程
         pool.close()
+        #等待子进程退出
         pool.join()
 
         print('error rate is {}%'.format(round(d['error'] / words_count * 100, 2)))
