@@ -57,6 +57,7 @@ def image2vector(filepath):
 
     return data
 
+@my_wrap
 def get_words_dataset(dir):
     words_labels = []
     filelist = listdir(dir)
@@ -86,7 +87,8 @@ def main(argv=None):
                 error += 1
 
         print('error rate is {}%'.format(round(error / words_count * 100, 2)))
-        pass
+        print('error rate is {}% ({} {})'.format(round(error / words_count * 100, 2), error, words_count))
+
     except MyExcept as e:
         print(e)
         return 2
